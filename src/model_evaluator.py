@@ -150,7 +150,7 @@ class ModelEvaluator:
             plt.savefig(save_path, dpi=300)
         plt.close()
 
-    # ----------------------------------------------------------
+ 
     def save_all_feature_importances(self, save_name):
         for model_name, importance in self.feature_importances.items():
             if importance is None:
