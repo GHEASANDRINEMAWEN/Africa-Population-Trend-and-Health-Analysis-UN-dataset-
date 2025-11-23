@@ -1,14 +1,22 @@
 """
 model_evaluator.py
 
-Provides tools for evaluating, comparing, and visualizing the performance
-of multiple regression models using standard performance metrics, cross-validation,
-and feature importance interpretation.
+Automatically evaluates models and saves:
+- Performance tables
+- Prediction outputs
+- Comparison plots
+- Feature importance plots
 
+All results stored under:
+results/
+    ├── figures/
+    ├── tables/
+    └── predictions/
 """
 
 import pandas as pd
 import numpy as np
+import os
 from sklearn.metrics import (
     r2_score,
     mean_absolute_error,
@@ -23,215 +31,138 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
 
 class ModelEvaluator:
-    """
-    Evaluate and compare multiple regression models.
-
-    This class supports:
-    - Training models using train/test splits from a ModelTrainer instance
-    - Computing common regression metrics (R², RMSE, MAE)
-    - Performing cross-validation
-    - Storing feature importances (if provided by the model)
-    - Plotting model comparison and feature importance
-
-    Attributes
-    ----------
-    results : list of dict
-        Stores metric results for each evaluated model.
-    feature_importances : dict
-        Maps model names to pandas.Series objects of feature importances.
-    available_models : dict
-        Registry of model names mapped to their constructors.
-    """
-
-    def __init__(self):
+    def __init__(self, results_dir="results"):
         self.results = []
         self.feature_importances = {}
 
-        # Registry of supported models
+        # registry of model types
         self.available_models = {
             "LinearRegression": LinearRegression,
             "RandomForestRegressor": RandomForestRegressor,
             "GradientBoostingRegressor": GradientBoostingRegressor,
         }
 
-    # ------------------------------------------------------------------
+        # Create results folder structure
+        self.results_dir = results_dir
+        os.makedirs(f"{results_dir}/figures", exist_ok=True)
+        os.makedirs(f"{results_dir}/tables", exist_ok=True)
+        os.makedirs(f"{results_dir}/predictions", exist_ok=True)
+
+    # ----------------------------------------------------------
     def build_model(self, model_name):
-        """
-        Create a model instance given its name.
-
-        Parameters
-        ----------
-        model_name : str
-            Name of the model as defined in available_models.
-
-        Returns
-        -------
-        estimator
-            Instantiated model with default hyperparameters.
-
-        Raises
-        ------
-        ValueError
-            If model_name is not recognized.
-        """
         if model_name not in self.available_models:
-            raise ValueError(
-                f"Model '{model_name}' not found. "
-                f"Available models: {list(self.available_models.keys())}"
-            )
+            raise ValueError(f"Unknown model: {model_name}")
 
         return self.available_models[model_name]()
 
-    # ------------------------------------------------------------------
-    def evaluate_single_model(
-        self, name, model, X_train, X_test, y_train, y_test, cv=5
-    ):
-        """
-        Train and evaluate a single regression model.
+    # ----------------------------------------------------------
+    def evaluate_single_model(self, name, model, trainer, cv=5):
+        X_train, X_test = trainer.X_train, trainer.X_test
+        y_train, y_test = trainer.y_train, trainer.y_test
 
-        Parameters
-        ----------
-        name : str
-            Display name for the model.
-        model : estimator
-            Model instance to evaluate.
-        X_train, X_test : pandas.DataFrame
-            Training and testing features.
-        y_train, y_test : array-like
-            Training and testing target values.
-        cv : int, default=5
-            Number of cross-validation folds.
-
-        Stores
-        ------
-        - R² (train + test)
-        - RMSE
-        - MAE
-        - Cross-validation mean + std
-        - Feature importance (if available)
-        """
         model.fit(X_train, y_train)
 
-        # Predictions
+        # predictions
         y_train_pred = model.predict(X_train)
         y_test_pred = model.predict(X_test)
 
-        # Metrics
+        # metrics
         rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
         mae = mean_absolute_error(y_test, y_test_pred)
         r2_train = r2_score(y_train, y_train_pred)
         r2_test = r2_score(y_test, y_test_pred)
 
-        # Cross-validation scores
+        # Cross validation
         cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="r2")
 
-        self.results.append(
-            {
-                "Model": name,
-                "Train R2": r2_train,
-                "Test R2": r2_test,
-                "RMSE": rmse,
-                "MAE": mae,
-                "CV Mean R2": cv_scores.mean(),
-                "CV Std": cv_scores.std(),
-            }
-        )
+        # store results
+        self.results.append({
+            "Model": name,
+            "Train R2": r2_train,
+            "Test R2": r2_test,
+            "RMSE": rmse,
+            "MAE": mae,
+            "CV Mean R2": cv_scores.mean(),
+            "CV Std": cv_scores.std()
+        })
 
-        # Extract feature importance
-        if hasattr(model, "coef_"):  # linear models
+        # Feature importance
+        if hasattr(model, "coef_"):
             self.feature_importances[name] = pd.Series(
                 model.coef_, index=X_train.columns
             ).sort_values(ascending=False)
 
-        elif hasattr(model, "feature_importances_"):  # tree-based models
+        elif hasattr(model, "feature_importances_"):
             self.feature_importances[name] = pd.Series(
                 model.feature_importances_, index=X_train.columns
             ).sort_values(ascending=False)
 
         else:
-            # No importance available
             self.feature_importances[name] = None
 
-    # ------------------------------------------------------------------
-    def evaluate_models(self, trainer, model_names, cv=5):
-        """
-        Evaluate a list of models using a ModelTrainer instance.
+        return model, y_test_pred
 
-        Parameters
-        ----------
-        trainer : ModelTrainer
-            A fitted ModelTrainer object containing X_train, X_test, etc.
-        model_names : list of str
-            Names of models to evaluate.
-        cv : int, default=5
-            Cross-validation folds.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Table of evaluation results for all models.
+    # ----------------------------------------------------------
+    def evaluate_models(self, trainer, model_names, save_name="results", cv=5):
         """
+        Runs all models and automatically saves:
+        - Model comparison table: results/tables/{save_name}_comparison.csv
+        - Predictions for each model
+        - Feature importance plot (if available)
+        - Model comparison plot
+        """
+
+        self.results = []  # reset for each run
+        all_predictions = {}
+
         for name in model_names:
             model = self.build_model(name)
-            self.evaluate_single_model(
-                name,
-                model,
-                trainer.X_train,
-                trainer.X_test,
-                trainer.y_train,
-                trainer.y_test,
-                cv=cv,
-            )
+            trained_model, preds = self.evaluate_single_model(name, model, trainer, cv=cv)
+            all_predictions[name] = preds
 
-        return pd.DataFrame(self.results)
+        # Save table
+        df_results = pd.DataFrame(self.results)
+        df_results.to_csv(f"{self.results_dir}/tables/{save_name}_comparison.csv", index=False)
 
-    # ------------------------------------------------------------------
-    def plot_comparison(self, metric="Test R2"):
-        """
-        Visualize a comparison of model performance using a selected metric.
+        # Save predictions per model
+        pred_df = trainer.id_test.copy()
+        for model_name, preds in all_predictions.items():
+            pred_df[f"{model_name}_pred"] = preds
 
-        Parameters
-        ----------
-        metric : str, default="Test R2"
-            The metric to plot (must exist in results).
-        """
+        pred_df.to_csv(f"{self.results_dir}/predictions/{save_name}_predictions.csv", index=False)
+
+        # Save plots
+        self.plot_comparison(metric="Test R2", save_path=f"{self.results_dir}/figures/{save_name}_model_comparison.png")
+        self.save_all_feature_importances(save_name)
+
+        return df_results
+
+    # ----------------------------------------------------------
+    def plot_comparison(self, metric="Test R2", save_path=None):
         df = pd.DataFrame(self.results)
-
-        if metric not in df.columns:
-            raise ValueError(
-                f"Metric '{metric}' not found. Available metrics: {df.columns.tolist()}"
-            )
 
         plt.figure(figsize=(8, 5))
         sns.barplot(data=df, x="Model", y=metric)
         plt.title(f"Model Comparison – {metric}")
         plt.tight_layout()
-        plt.show()
 
-    # ------------------------------------------------------------------
-    def plot_feature_importance(self, model_name, top_n=5):
-        """
-        Plot top-N most important features for a given model.
+        if save_path:
+            plt.savefig(save_path, dpi=300)
+        plt.close()
 
-        Parameters
-        ----------
-        model_name : str
-            The name of the evaluated model.
-        top_n : int, default=5
-            Number of top features to display.
-        """
-        importance = self.feature_importances.get(model_name)
+    # ----------------------------------------------------------
+    def save_all_feature_importances(self, save_name):
+        for model_name, importance in self.feature_importances.items():
+            if importance is None:
+                continue
 
-        if importance is None:
-            print(f"No feature importance available for {model_name}.")
-            return
+            plt.figure(figsize=(8, 6))
+            sns.barplot(x=importance.head(10).values, y=importance.head(10).index)
+            plt.title(f"Top Features – {model_name}")
+            plt.tight_layout()
 
-        plt.figure(figsize=(8, 6))
-        sns.barplot(
-            x=importance.head(top_n).values, y=importance.head(top_n).index
-        )
-        plt.xlabel("Importance")
-        plt.ylabel("Feature")
-        plt.title(f"Top {top_n} Features – {model_name}")
-        plt.tight_layout()
-        plt.show()
+            plt.savefig(
+                f"{self.results_dir}/figures/{save_name}_{model_name}_feature_importance.png",
+                dpi=300
+            )
+            plt.close()
