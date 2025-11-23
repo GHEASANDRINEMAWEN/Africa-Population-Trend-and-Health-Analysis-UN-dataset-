@@ -11,12 +11,6 @@ class FeatureEngineer:
     def __init__(self, df):
         self.df = df.copy()
 
-    def add_fertility_category(self):
-        # High fertility = TFR >= 4
-        self.df["fertility_category"] = self.df[
-            "total_fertility_rate_children_per_women"
-        ].apply(lambda x: "high" if x >= 4 else "low")
-        return self.df
 
     def add_trend_features(self):
         # Compute change between 2010 and 2024 for each country
@@ -59,7 +53,6 @@ class FeatureEngineer:
 
     def process(self):
         # Run all feature creation steps
-        self.add_fertility_category()
         self.add_trend_features()
         self.add_means()
         return self.df
