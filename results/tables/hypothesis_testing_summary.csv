@@ -1,0 +1,4 @@
+Hypothesis,Best Model,Train R²,Test R²,CV Mean R²,CV Std,RMSE,MAE,Decision,Evidence Strength,Confidence
+H1: Fertility → Maternal Mortality,Gradient Boosting,0.9944,0.8931,0.8352,0.0655,68.02,50.69,ACCEPT,Strong,90%
+H2: Life Expectancy → Population Growth,Linear Regression,0.858,0.8973,0.7169,0.1567,0.263,0.185,ACCEPT,Strong,90%
+H3: Under-5 Mortality → Life Expectancy,Linear Regression,0.9999,0.9997,0.9998,6e-05,0.112,0.078,STRONGLY ACCEPT,Extremely Strong,>99%
