@@ -44,17 +44,28 @@ class ModelEvaluator:
     # Evaluate one model
     # -----------------------------------------------------------
     def evaluate_single_model(self, name, model, X_train, X_test, y_train, y_test, cv=5):
-        model.fit(X_train, y_train)
+        # Make copies to avoid issues with modified data
+        X_train_clean = X_train.copy()
+        X_test_clean = X_test.copy()
+        
+        # Drop any columns with NaN values
+        cols_with_nan = X_train_clean.columns[X_train_clean.isna().any()].tolist()
+        if cols_with_nan:
+            print(f"  Dropping columns with NaN for {name}: {cols_with_nan}")
+            X_train_clean = X_train_clean.drop(columns=cols_with_nan)
+            X_test_clean = X_test_clean.drop(columns=cols_with_nan)
+        
+        model.fit(X_train_clean, y_train)
 
-        y_train_pred = model.predict(X_train)
-        y_test_pred = model.predict(X_test)
+        y_train_pred = model.predict(X_train_clean)
+        y_test_pred = model.predict(X_test_clean)
 
         rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
         mae = mean_absolute_error(y_test, y_test_pred)
         r2_train = r2_score(y_train, y_train_pred)
         r2_test = r2_score(y_test, y_test_pred)
 
-        cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="r2")
+        cv_scores = cross_val_score(model, X_train_clean, y_train, cv=cv, scoring="r2")
 
         self.results.append({
             "Model": name,
@@ -69,12 +80,12 @@ class ModelEvaluator:
         # Store importance
         if hasattr(model, "coef_"):
             self.feature_importances[name] = pd.Series(
-                model.coef_, index=X_train.columns
+                model.coef_, index=X_train_clean.columns
             ).sort_values(ascending=False)
 
         elif hasattr(model, "feature_importances_"):
             self.feature_importances[name] = pd.Series(
-                model.feature_importances_, index=X_train.columns
+                model.feature_importances_, index=X_train_clean.columns
             ).sort_values(ascending=False)
 
         else:
